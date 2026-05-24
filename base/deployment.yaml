@@ -1,0 +1,183 @@
+# wiki-mcp Deployment.
+#
+# Three containers in one pod, all sharing /data via the PVC:
+#
+#   initContainer  init-clone   →  one-shot: clone or fast-forward
+#                                   dvystrcil/llm-wiki into /data
+#   main          wiki-mcp      →  serves the MCP HTTP API, reads + writes
+#                                   /data/wiki
+#   sidecar       git-sync      →  loops every SYNC_INTERVAL_SECONDS:
+#                                   commit local edits → pull rebase → push
+#
+# Why all in one pod (not a separate CronJob):
+#   - Shared volume — CronJob would need PVC RWO + the wiki-mcp pod
+#     can't release it during the job window
+#   - Co-located lifecycle is what we want: if the sidecar crashloops
+#     because the token is bad, the pod stays NotReady and we notice
+#
+# Image pinned to the immutable :sha-<short> tag, NEVER :dev/:latest —
+# matches the freecad-mcp/IU pattern and means we always know exactly
+# what's running. The argocd-image-updater CR in argocd-projects watches
+# harbor.sirddail.net/ai/wiki-mcp for new sha-* tags and rewrites this
+# line in-place on each CI push (via writeBackTarget: kustomization:/base).
+# The git-sync image is alpine:3 (~9 MB) with no homelab-internal
+# dependencies; safe to pull from upstream.
+#
+# Health: /healthz on the wiki-mcp container is the truth source for
+# pod-Ready. The sidecar has no probe (it's a loop sidecar, not a
+# service); if it dies, the wiki-mcp container keeps serving reads —
+# we just stop syncing until restart.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wiki-mcp
+  namespace: wiki-mcp
+  labels:
+    app.kubernetes.io/name: wiki-mcp
+    app.kubernetes.io/part-of: homelab-mcp
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  strategy:
+    # Recreate so the PVC's RWO contract is satisfied during rollouts —
+    # RollingUpdate would briefly have two pods, the second stuck Pending
+    # waiting for the volume.
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: wiki-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: wiki-mcp
+        app.kubernetes.io/part-of: homelab-mcp
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: wiki-mcp-harbor-pull
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+
+      initContainers:
+        - name: init-clone
+          image: alpine:3
+          # The init script wants apk + git + a writable WIKI_ROOT.
+          # apk needs root briefly, so we run init as root and let
+          # fsGroup pin ownership afterward.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+          command: ["/bin/sh", "/scripts/init.sh"]
+          env:
+            - name: WIKI_ROOT
+              value: /data
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: git-sync-script
+              mountPath: /scripts
+              readOnly: true
+            - name: git-secret
+              mountPath: /etc/git-secret
+              readOnly: true
+
+      containers:
+        - name: wiki-mcp
+          image: harbor.sirddail.net/ai/wiki-mcp:sha-e9933e1
+          imagePullPolicy: Always
+          args:
+            - --http=:8080
+            - --wiki-root=/data/wiki
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              # Per feedback_unbounded_pods_are_node_killers — always
+              # set memory limits. The Go binary is tiny; 128Mi buys
+              # headroom for in-memory page scans.
+              memory: "128Mi"
+              cpu: "300m"
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+        - name: git-sync
+          image: alpine:3
+          # Sidecar needs apk + git, same as init. Stays root for the
+          # apk install at startup. The shared volume is fsGroup-owned
+          # so writes are correctly attributed regardless.
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
+          command: ["/bin/sh", "/scripts/sync.sh"]
+          env:
+            - name: WIKI_ROOT
+              value: /data
+            - name: SYNC_INTERVAL_SECONDS
+              value: "300"
+            - name: AUTHOR_NAME
+              value: wiki-mcp
+            - name: AUTHOR_EMAIL
+              value: wiki-mcp@sirddail.net
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "5m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: git-sync-script
+              mountPath: /scripts
+              readOnly: true
+            - name: git-secret
+              mountPath: /etc/git-secret
+              readOnly: true
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: wiki-mcp-data
+        - name: git-sync-script
+          configMap:
+            name: wiki-mcp-git-sync-script
+            defaultMode: 0o755
+        - name: git-secret
+          secret:
+            secretName: wiki-mcp-github-token
+            defaultMode: 0o400

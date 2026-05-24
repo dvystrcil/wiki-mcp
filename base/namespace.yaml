@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: wiki-mcp
+  labels:
+    app.kubernetes.io/part-of: homelab-mcp
+    # Per gateway-services chart convention — the gateway needs to reach
+    # this Service from istio-system, so label here matches the chart's
+    # multi-source HTTPRoute selector.
+    istio.io/dataplane-mode: ambient

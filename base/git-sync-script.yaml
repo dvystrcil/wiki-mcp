@@ -1,0 +1,100 @@
+# Sync script bundled as a ConfigMap so the sidecar image can stay generic
+# (alpine + git + bash, nothing wiki-specific baked in).
+#
+# Sync loop semantics:
+#   1. cd into the clone
+#   2. If there are local changes, commit them with "wiki-mcp autosync <ts>"
+#   3. git pull --rebase --autostash (autostash handles any unstaged drift)
+#   4. git push (no force; if rebase conflict, sleep + retry next cycle)
+#   5. sleep $SYNC_INTERVAL_SECONDS
+#
+# Race semantics: wiki-mcp writes are file-level atomic (Go os.WriteFile).
+# A write that lands after `git add -A` will be picked up in the next
+# cycle. Worst-case publish latency = 2 × SYNC_INTERVAL.
+#
+# Failure semantics: any individual cycle can fail without crashing the
+# sidecar — we always trap and continue. The pod stays Ready; the
+# next cycle gets another shot.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wiki-mcp-git-sync-script
+  namespace: wiki-mcp
+  labels:
+    app.kubernetes.io/name: wiki-mcp
+    app.kubernetes.io/part-of: homelab-mcp
+data:
+  init.sh: |
+    #!/bin/sh
+    # Init: one-shot. Runs as initContainer before main + sidecar start.
+    # Clones llm-wiki into the PVC if empty, otherwise fast-forwards.
+    set -eu
+
+    GIT_DIR="${WIKI_ROOT}/.git"
+    REPO_URL="https://x-access-token:$(cat /etc/git-secret/token)@github.com/dvystrcil/llm-wiki.git"
+
+    apk add --no-cache git ca-certificates >/dev/null
+
+    if [ ! -d "$GIT_DIR" ]; then
+      echo "[init] empty volume — cloning llm-wiki"
+      git clone --depth 50 "$REPO_URL" "$WIKI_ROOT"
+    else
+      echo "[init] existing clone — fetching + fast-forwarding"
+      cd "$WIKI_ROOT"
+      # Reset URL in case the token rotated.
+      git remote set-url origin "$REPO_URL"
+      git fetch origin
+      # If local has diverged we let the sidecar's --autostash handle it.
+      git pull --rebase --autostash origin main || {
+        echo "[init] pull failed — leaving volume as-is; sidecar will retry"
+      }
+    fi
+
+    echo "[init] done"
+    ls -la "$WIKI_ROOT" | head -20
+
+  sync.sh: |
+    #!/bin/sh
+    # Sidecar loop. Reconciles the PVC with dvystrcil/llm-wiki on a cadence.
+    set -u
+
+    SYNC_INTERVAL_SECONDS="${SYNC_INTERVAL_SECONDS:-300}"
+    AUTHOR_NAME="${AUTHOR_NAME:-wiki-mcp}"
+    AUTHOR_EMAIL="${AUTHOR_EMAIL:-wiki-mcp@sirddail.net}"
+
+    apk add --no-cache git ca-certificates >/dev/null
+
+    cd "$WIKI_ROOT"
+    git config user.name "$AUTHOR_NAME"
+    git config user.email "$AUTHOR_EMAIL"
+
+    # Refresh the URL once at startup in case the token rotated since init.
+    git remote set-url origin "https://x-access-token:$(cat /etc/git-secret/token)@github.com/dvystrcil/llm-wiki.git"
+
+    echo "[sync] loop starting, interval=${SYNC_INTERVAL_SECONDS}s"
+
+    while true; do
+      sleep "$SYNC_INTERVAL_SECONDS"
+
+      ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+      # 1. Commit any local writes
+      git add -A
+      if ! git diff --cached --quiet; then
+        git commit -m "wiki-mcp autosync ${ts}" || true
+        echo "[sync] ${ts} committed local writes"
+      fi
+
+      # 2. Reconcile with remote
+      git pull --rebase --autostash origin main || {
+        echo "[sync] ${ts} pull failed — will retry"
+        continue
+      }
+
+      # 3. Push (no-op if nothing local). If push fails (e.g. branch
+      # protection rejected the commit), log + carry on. The local
+      # state stays committed and next pull will see the rejection.
+      git push origin main || {
+        echo "[sync] ${ts} push failed — branch protection? bad token?"
+      }
+    done

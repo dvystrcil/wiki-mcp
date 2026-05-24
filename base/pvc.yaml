@@ -1,0 +1,31 @@
+# PersistentVolumeClaim for the wiki-mcp shared volume.
+#
+# Why PVC and not emptyDir:
+#   - wiki_write tool persists user edits to the local clone
+#   - The sidecar pushes them on a 5-min cadence
+#   - If we used emptyDir, a pod restart between write and next push
+#     would lose pending writes
+#   - PVC gives writes durability across pod restarts; the sidecar's
+#     job becomes "reconcile local ↔ remote", not "preserve user data"
+#
+# Size: 1Gi is generous — the entire llm-wiki repo is <50 KB today and
+# .git contents grow linearly with revisions, not exponentially.
+#
+# AccessMode: ReadWriteOnce because the Deployment has replicas: 1
+# (writes can't be distributed across pods without a more complex
+# leader-election scheme). If we ever scale read-replicas we'd need
+# RWO for the writer + ReadOnlyMany for readers.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wiki-mcp-data
+  namespace: wiki-mcp
+  labels:
+    app.kubernetes.io/name: wiki-mcp
+    app.kubernetes.io/part-of: homelab-mcp
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
