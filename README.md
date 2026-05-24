@@ -38,12 +38,16 @@ clone; only sync stops.
 
 ## Image tag convention
 
-Pinned to `harbor.sirddail.net/ai/wiki-mcp:sha-<short>` — the immutable
-SHA tag produced by [wiki-mcp-docker](https://github.com/dvystrcil/wiki-mcp-docker)
-CI. The `:dev` tag exists in Harbor but is mutable; we don't pin it
-because then we can't tell what's running. ImageUpdater rewrites the
-pinned tag in-place on each new push (see `wiki-mcp-iu.yaml` in
-argocd-projects).
+Pinned to `harbor.sirddail.net/ai/wiki-mcp:<semver>` — matches the
+[open-terminal](https://github.com/dvystrcil/open-terminal) pattern.
+
+**Release flow:**
+
+1. Push to `main` of [wiki-mcp-docker](https://github.com/dvystrcil/wiki-mcp-docker) → CI builds `:dev` (mutable) and `:sha-<short>` (immutable debug aid)
+2. Cut a GitHub release (e.g. `v0.2.0`) → release workflow retags `:dev` as `:0.2.0`, `:0.2`, and `:latest` in Harbor (no rebuild)
+3. Bump the `image:` line in `base/deployment.yaml` here → commit + push → Argo syncs
+
+No ImageUpdater — releases are intentional, gated by an actual GitHub release. The `:dev` tag never appears in this deployment.
 
 ## Secrets
 

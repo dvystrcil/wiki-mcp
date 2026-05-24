@@ -15,13 +15,12 @@
 #   - Co-located lifecycle is what we want: if the sidecar crashloops
 #     because the token is bad, the pod stays NotReady and we notice
 #
-# Image pinned to the immutable :sha-<short> tag, NEVER :dev/:latest —
-# matches the freecad-mcp/IU pattern and means we always know exactly
-# what's running. The argocd-image-updater CR in argocd-projects watches
-# harbor.sirddail.net/ai/wiki-mcp for new sha-* tags and rewrites this
-# line in-place on each CI push (via writeBackTarget: kustomization:/base).
-# The git-sync image is alpine:3 (~9 MB) with no homelab-internal
-# dependencies; safe to pull from upstream.
+# Image pinned to an immutable semver tag, NEVER :dev/:latest —
+# matches the open-terminal pattern. Bumps happen manually when a new
+# GitHub release fires release.yaml in wiki-mcp-docker (which retags
+# :dev → semver in Harbor). Then bump THIS line + commit + push;
+# Argo auto-syncs. The git-sync image is alpine:3 (~9 MB) with no
+# homelab-internal dependencies; safe to pull from upstream.
 #
 # Health: /healthz on the wiki-mcp container is the truth source for
 # pod-Ready. The sidecar has no probe (it's a loop sidecar, not a
@@ -89,7 +88,7 @@ spec:
 
       containers:
         - name: wiki-mcp
-          image: harbor.sirddail.net/ai/wiki-mcp:sha-e9933e1
+          image: harbor.sirddail.net/ai/wiki-mcp:0.1.0
           imagePullPolicy: Always
           args:
             - --http=:8080
