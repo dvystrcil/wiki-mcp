@@ -1,0 +1,35 @@
+# ImageUpdater CR for wiki-mcp.
+#
+# Per architecture/applicationset-patterns.md (homelab): distributed
+# location, enrolled via image-updater-apps ApplicationSet.
+#
+# Watches harbor.sirddail.net/ai/wiki-mcp for semver release tags
+# emitted by wiki-mcp-docker's release.yaml retag chain on each
+# GitHub release publish. Patch tags auto-roll the deploy here.
+#
+# Tag format: bare semver (e.g. "0.1.0"), no v prefix — per
+# homelab canonical style (feedback_git_tag_vs_image_tag_convention).
+# release.yaml's docker/metadata-action with type=semver,pattern=
+# {{version}} strips the v during retag.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: wiki-mcp-iu
+spec:
+  namespace: argocd
+  applicationRefs:
+    - namePattern: "wiki-mcp"
+      useAnnotations: false
+      images:
+        - alias: "wiki-mcp"
+          imageName: "harbor.sirddail.net/ai/wiki-mcp:0.x"
+          commonUpdateSettings:
+            pullSecret: "pullsecret:wiki-mcp/wiki-mcp-harbor-pull"
+            forceUpdate: false
+      writeBackConfig:
+        method: "git"
+        gitConfig:
+          repository: "https://github.com/dvystrcil/wiki-mcp.git"
+          branch: "main"
+          # Deploy manifests live in base/ (not overlays/) for this repo.
+          writeBackTarget: "kustomization:/base"
