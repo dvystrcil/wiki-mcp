@@ -10,3 +10,6 @@ resources:
   - git-sync-script.yaml
   - deployment.yaml
   - service.yaml
+images:
+  - name: harbor.sirddail.net/ai/wiki-mcp
+    newTag: 0.1.2
