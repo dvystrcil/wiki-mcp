@@ -4,6 +4,7 @@ namespace: wiki-mcp
 resources:
   - namespace.yaml
   - harbor-pull-secret.yaml
+  - image-updater-rbac.yaml
   - github-token-secret.yaml
   - pvc.yaml
   - git-sync-script.yaml
