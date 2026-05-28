@@ -146,7 +146,13 @@ spec:
             - name: WIKI_ROOT
               value: /data
             - name: SYNC_INTERVAL_SECONDS
-              value: "300"
+              # 30s instead of 300s — the wiki_import MCP tool polls
+              # the local Store for up to 35s after n8n reports
+              # imported, so git-sync needs to pull within that window
+              # for the natural flow (wiki_import → wiki_lookup) to
+              # succeed without `imported_pending` downgrade.
+              # Tracked: dvystrcil/homelab#240.
+              value: "30"
             - name: AUTHOR_NAME
               value: wiki-mcp
             - name: AUTHOR_EMAIL
