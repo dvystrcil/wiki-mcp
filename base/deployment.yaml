@@ -76,14 +76,24 @@ spec:
           env:
             - name: WIKI_ROOT
               value: /data
+            - name: GITSYNC_APP_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: wiki-mcp-github-app
+                  key: GITSYNC_APP_CLIENT_ID
+            - name: GITSYNC_APP_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: wiki-mcp-github-app
+                  key: GITSYNC_APP_INSTALLATION_ID
           volumeMounts:
             - name: data
               mountPath: /data
             - name: git-sync-script
               mountPath: /scripts
               readOnly: true
-            - name: git-secret
-              mountPath: /etc/git-secret
+            - name: app-key
+              mountPath: /app-key
               readOnly: true
 
       containers:
@@ -157,6 +167,16 @@ spec:
               value: wiki-mcp
             - name: AUTHOR_EMAIL
               value: wiki-mcp@sirddail.net
+            - name: GITSYNC_APP_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: wiki-mcp-github-app
+                  key: GITSYNC_APP_CLIENT_ID
+            - name: GITSYNC_APP_INSTALLATION_ID
+              valueFrom:
+                secretKeyRef:
+                  name: wiki-mcp-github-app
+                  key: GITSYNC_APP_INSTALLATION_ID
           resources:
             requests:
               memory: "32Mi"
@@ -170,8 +190,8 @@ spec:
             - name: git-sync-script
               mountPath: /scripts
               readOnly: true
-            - name: git-secret
-              mountPath: /etc/git-secret
+            - name: app-key
+              mountPath: /app-key
               readOnly: true
 
       volumes:
@@ -182,7 +202,10 @@ spec:
           configMap:
             name: wiki-mcp-git-sync-script
             defaultMode: 0o755
-        - name: git-secret
+        - name: app-key
           secret:
-            secretName: wiki-mcp-github-token
+            secretName: wiki-mcp-github-app
             defaultMode: 0o400
+            items:
+              - key: GITSYNC_APP_PRIVATE_KEY
+                path: private-key

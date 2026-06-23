@@ -5,7 +5,7 @@ resources:
   - namespace.yaml
   - harbor-pull-secret.yaml
   - image-updater-rbac.yaml
-  - github-token-secret.yaml
+  - github-app-secret.yaml
   - pvc.yaml
   - git-sync-script.yaml
   - deployment.yaml
