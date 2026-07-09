@@ -12,4 +12,4 @@ resources:
   - service.yaml
 images:
   - name: harbor.sirddail.net/ai/wiki-mcp
-    newTag: 0.1.6
+    newTag: 0.1.7
