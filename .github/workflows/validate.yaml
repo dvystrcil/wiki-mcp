@@ -1,0 +1,8 @@
+name: validate
+on: [pull_request]
+jobs:
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dvystrcil/kustomize-validate-action@v1
