@@ -1,0 +1,17 @@
+# Recommendation-only VPAs for every Deployment/StatefulSet in
+# this app (D-012, epic homelab#455). The in-cluster recommender
+# publishes targets in each VPA's status; requests get right-sized
+# from measured data in a follow-up commit. Never auto-applies.
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: wiki-mcp
+  namespace: wiki-mcp
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: wiki-mcp
+  updatePolicy:
+    updateMode: "Off"
