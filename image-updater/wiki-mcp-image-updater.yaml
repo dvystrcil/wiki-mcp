@@ -32,4 +32,4 @@ spec:
           repository: "https://github.com/dvystrcil/wiki-mcp.git"
           branch: "main"
           # Deploy manifests live in base/ (not overlays/) for this repo.
-          writeBackTarget: "kustomization:/base"
+          writeBackTarget: "kustomization:/overlays"
