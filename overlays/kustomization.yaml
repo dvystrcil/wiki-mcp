@@ -2,4 +2,4 @@ resources:
 - ../base
 images:
 - name: harbor.sirddail.net/ai/wiki-mcp
-  newTag: 0.1.13
+  newTag: 0.1.14
