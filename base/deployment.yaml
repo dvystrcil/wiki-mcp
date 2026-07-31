@@ -107,15 +107,16 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          # D-012 (VPA epic homelab#455): requests right-sized from the
+          # Off-mode VPA's measured target. Memory limit bumped 128Mi->192Mi
+          # -- the new 125Mi request left only 3Mi headroom against the old
+          # limit.
           resources:
             requests:
-              memory: "32Mi"
-              cpu: "10m"
+              memory: "125Mi"
+              cpu: "12m"
             limits:
-              # Per feedback_unbounded_pods_are_node_killers — always
-              # set memory limits. The Go binary is tiny; 128Mi buys
-              # headroom for in-memory page scans.
-              memory: "128Mi"
+              memory: "192Mi"
               cpu: "300m"
           startupProbe:
             httpGet:
@@ -177,12 +178,15 @@ spec:
                 secretKeyRef:
                   name: wiki-mcp-github-app
                   key: GITSYNC_APP_INSTALLATION_ID
+          # D-012 (VPA epic homelab#455): requests right-sized from the
+          # Off-mode VPA's measured target. Memory limit bumped 128Mi->192Mi
+          # -- the new ~156Mi request would otherwise exceed the old limit.
           resources:
             requests:
-              memory: "32Mi"
-              cpu: "5m"
+              memory: "156Mi"
+              cpu: "23m"
             limits:
-              memory: "128Mi"
+              memory: "192Mi"
               cpu: "100m"
           volumeMounts:
             - name: data
