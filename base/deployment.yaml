@@ -107,16 +107,15 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          # D-012 (VPA epic homelab#455): requests right-sized from the
+          # Off-mode VPA's measured target. See notes in the PR body.
           resources:
             requests:
-              memory: "32Mi"
-              cpu: "10m"
+              cpu: 12m
+              memory: 125Mi
             limits:
-              # Per feedback_unbounded_pods_are_node_killers — always
-              # set memory limits. The Go binary is tiny; 128Mi buys
-              # headroom for in-memory page scans.
-              memory: "128Mi"
-              cpu: "300m"
+              cpu: 300m
+              memory: 160Mi
           startupProbe:
             httpGet:
               path: /healthz
@@ -177,13 +176,15 @@ spec:
                 secretKeyRef:
                   name: wiki-mcp-github-app
                   key: GITSYNC_APP_INSTALLATION_ID
+          # D-012 (VPA epic homelab#455): requests right-sized from the
+          # Off-mode VPA's measured target. See notes in the PR body.
           resources:
             requests:
-              memory: "32Mi"
-              cpu: "5m"
+              cpu: 23m
+              memory: 156Mi
             limits:
-              memory: "128Mi"
-              cpu: "100m"
+              cpu: 100m
+              memory: 224Mi
           volumeMounts:
             - name: data
               mountPath: /data
