@@ -16,7 +16,6 @@ kind: ImageUpdater
 metadata:
   name: wiki-mcp-iu
 spec:
-  namespace: argocd
   applicationRefs:
     - namePattern: "wiki-mcp"
       useAnnotations: false
