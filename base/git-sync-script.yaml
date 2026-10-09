@@ -85,9 +85,28 @@ data:
     GIT_DIR="${WIKI_ROOT}/.git"
 
     apk add --no-cache git ca-certificates openssl curl jq >/dev/null
+    SCRIPTS_DIR="${SCRIPTS_DIR:-/scripts}"
+    # A git process killed mid-operation leaves its .lock behind, and every
+    # later pull fails ("cannot lock ref 'ORIG_HEAD'"). That froze this
+    # checkout from 2026-09-06 to 2026-10-09: wiki-mcp served a month-old
+    # wiki and pushed nothing. Remove a lock only when it is older than
+    # STALE_LOCK_MINUTES AND no git process is running -- a fresh lock may
+    # belong to a live git.
+    STALE_LOCK_MINUTES="${STALE_LOCK_MINUTES:-10}"
+    clear_stale_locks() {
+      pgrep -x git >/dev/null 2>&1 && return 0
+      find "${WIKI_ROOT}/.git" -name '*.lock' -mmin +"$STALE_LOCK_MINUTES" 2>/dev/null | while read -r _l; do
+        rm -f "$_l" && echo "[git-sync] removed stale $_l (older than ${STALE_LOCK_MINUTES}m, no git running)"
+      done
+    }
+    # Tests point origin at a local repo; production uses the App token URL.
+    remote_url() {
+      if [ -n "${GIT_REMOTE_URL:-}" ]; then printf '%s' "$GIT_REMOTE_URL"; return 0; fi
+      printf 'https://x-access-token:%s@github.com/dvystrcil/llm-wiki.git' "$1"
+    }
 
-    TOKEN="$(sh /scripts/get-token.sh)"
-    REPO_URL="https://x-access-token:${TOKEN}@github.com/dvystrcil/llm-wiki.git"
+    TOKEN="$(sh "${SCRIPTS_DIR}/get-token.sh")"
+    REPO_URL="$(remote_url "$TOKEN")"
 
     if [ ! -d "$GIT_DIR" ]; then
       echo "[init] empty volume — cloning llm-wiki"
@@ -98,6 +117,7 @@ data:
       # Refresh URL with the freshly minted token.
       git remote set-url origin "$REPO_URL"
       git fetch origin
+      clear_stale_locks
       # If local has diverged we let the sidecar's --autostash handle it.
       git pull --rebase --autostash origin main || {
         echo "[init] pull failed — leaving volume as-is; sidecar will retry"
@@ -119,6 +139,34 @@ data:
     TOKEN_MAX_AGE_SECONDS=2400
 
     apk add --no-cache git ca-certificates openssl curl jq >/dev/null
+    SCRIPTS_DIR="${SCRIPTS_DIR:-/scripts}"
+    # A git process killed mid-operation leaves its .lock behind, and every
+    # later pull fails ("cannot lock ref 'ORIG_HEAD'"). That froze this
+    # checkout from 2026-09-06 to 2026-10-09: wiki-mcp served a month-old
+    # wiki and pushed nothing. Remove a lock only when it is older than
+    # STALE_LOCK_MINUTES AND no git process is running -- a fresh lock may
+    # belong to a live git.
+    STALE_LOCK_MINUTES="${STALE_LOCK_MINUTES:-10}"
+    clear_stale_locks() {
+      pgrep -x git >/dev/null 2>&1 && return 0
+      find "${WIKI_ROOT}/.git" -name '*.lock' -mmin +"$STALE_LOCK_MINUTES" 2>/dev/null | while read -r _l; do
+        rm -f "$_l" && echo "[git-sync] removed stale $_l (older than ${STALE_LOCK_MINUTES}m, no git running)"
+      done
+    }
+    # Tests point origin at a local repo; production uses the App token URL.
+    remote_url() {
+      if [ -n "${GIT_REMOTE_URL:-}" ]; then printf '%s' "$GIT_REMOTE_URL"; return 0; fi
+      printf 'https://x-access-token:%s@github.com/dvystrcil/llm-wiki.git' "$1"
+    }
+
+    # After this many CONSECUTIVE failed pulls, exit non-zero: the container
+    # restarts, the restart count climbs and pod-restart alerts fire. A
+    # sidecar that logs "will retry" forever is how the 2026-09 freeze went
+    # unnoticed for a month. Default 20 x 30 s = 10 min.
+    MAX_PULL_FAILS="${MAX_PULL_FAILS:-20}"
+    SYNC_MAX_LOOPS="${SYNC_MAX_LOOPS:-0}"   # tests only; 0 = forever
+    PULL_FAILS=0
+    LOOPS=0
 
     cd "$WIKI_ROOT"
     git config user.name "$AUTHOR_NAME"
@@ -133,8 +181,8 @@ data:
       if [ "$TOKEN_AT" -ne 0 ] && [ "$((_now - TOKEN_AT))" -lt "$TOKEN_MAX_AGE_SECONDS" ]; then
         return 0
       fi
-      _token="$(sh /scripts/get-token.sh)" || return 1
-      git remote set-url origin "https://x-access-token:${_token}@github.com/dvystrcil/llm-wiki.git"
+      _token="$(sh "${SCRIPTS_DIR}/get-token.sh")" || return 1
+      git remote set-url origin "$(remote_url "$_token")"
       TOKEN_AT="$_now"
       echo "[sync] minted fresh installation token"
     }
@@ -142,6 +190,8 @@ data:
     echo "[sync] loop starting, interval=${SYNC_INTERVAL_SECONDS}s"
 
     while true; do
+      if [ "$SYNC_MAX_LOOPS" -gt 0 ] && [ "$LOOPS" -ge "$SYNC_MAX_LOOPS" ]; then exit 0; fi
+      LOOPS=$((LOOPS + 1))
       sleep "$SYNC_INTERVAL_SECONDS"
 
       ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -159,10 +209,17 @@ data:
       fi
 
       # 2. Reconcile with remote
-      git pull --rebase --autostash origin main || {
-        echo "[sync] ${ts} pull failed — will retry"
+      clear_stale_locks
+      if ! git pull --rebase --autostash origin main; then
+        PULL_FAILS=$((PULL_FAILS + 1))
+        echo "[sync] ${ts} pull failed (${PULL_FAILS}/${MAX_PULL_FAILS}) — will retry"
+        if [ "$PULL_FAILS" -ge "$MAX_PULL_FAILS" ]; then
+          echo "[sync] FATAL: ${PULL_FAILS} consecutive pull failures — exiting so the container restarts and this is visible"
+          exit 1
+        fi
         continue
-      }
+      fi
+      PULL_FAILS=0
 
       # 3. Push (no-op if nothing local). If push fails (e.g. branch
       # protection rejected the commit), log + carry on. The local
