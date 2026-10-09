@@ -6,3 +6,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dvystrcil/kustomize-validate-action@v1
+  scripts:
+    # The git-sync scripts are shell inside a ConfigMap; tests/ extract and run
+    # the shipped copies. They never ran in CI before (2026-10-09), so a
+    # regression in the sidecar that keeps the wiki in sync could merge green.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run tests/test-*.sh
+        run: |
+          set -e
+          n=0
+          for t in tests/test-*.sh; do echo "== $t"; sh "$t"; n=$((n+1)); done
+          [ "$n" -gt 0 ] || { echo "no tests/test-*.sh found"; exit 1; }
+          echo "ran $n script test(s)"
