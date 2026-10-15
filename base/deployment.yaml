@@ -181,7 +181,7 @@ spec:
           # Off-mode VPA's measured target.
           resources:
             requests:
-              cpu: 12m
+              cpu: 23m
               memory: 125Mi
             limits:
               memory: 224Mi
