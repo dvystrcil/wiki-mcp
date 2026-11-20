@@ -4,7 +4,7 @@ jobs:
   manifests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dvystrcil/kustomize-validate-action@v1
   scripts:
     # The git-sync scripts are shell inside a ConfigMap; tests/ extract and run
@@ -12,7 +12,7 @@ jobs:
     # regression in the sidecar that keeps the wiki in sync could merge green.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Run tests/test-*.sh
         run: |
           set -e
