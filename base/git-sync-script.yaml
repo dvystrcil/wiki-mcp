@@ -11,7 +11,8 @@
 # Sync loop semantics:
 #   1. refresh the installation token if the cached one is stale (>40m)
 #   2. commit any local writes with "wiki-mcp autosync <ts>"
-#   3. git pull --rebase --autostash (autostash handles unstaged drift)
+#   3. git pull --rebase --autostash --depth $CLONE_DEPTH (autostash handles
+#      unstaged drift; --depth keeps the clone shallow on every pull)
 #   4. git push (no force; rebase conflict → sleep + retry next cycle)
 #   5. sleep $SYNC_INTERVAL_SECONDS
 #
@@ -105,23 +106,34 @@ data:
       printf 'https://x-access-token:%s@github.com/dvystrcil/llm-wiki.git' "$1"
     }
 
+    # wiki-mcp reads files, never git history, so the clone keeps only the
+    # last CLONE_DEPTH commits -- enough for a local autosync commit to rebase
+    # onto. `--depth` at clone time alone did not do this: the PVC was cloned
+    # on 2026-05-24 when llm-wiki had 19 commits (so nothing was cut), and
+    # plain pulls grow history without bound. Every fetch passes --depth now.
+    CLONE_DEPTH="${CLONE_DEPTH:-50}"
+
     TOKEN="$(sh "${SCRIPTS_DIR}/get-token.sh")"
     REPO_URL="$(remote_url "$TOKEN")"
 
     if [ ! -d "$GIT_DIR" ]; then
       echo "[init] empty volume — cloning llm-wiki"
-      git clone --depth 50 "$REPO_URL" "$WIKI_ROOT"
+      git clone --depth "$CLONE_DEPTH" "$REPO_URL" "$WIKI_ROOT"
     else
       echo "[init] existing clone — fetching + fast-forwarding"
       cd "$WIKI_ROOT"
       # Refresh URL with the freshly minted token.
       git remote set-url origin "$REPO_URL"
-      git fetch origin
       clear_stale_locks
       # If local has diverged we let the sidecar's --autostash handle it.
-      git pull --rebase --autostash origin main || {
+      # --depth also cuts an existing full clone down to CLONE_DEPTH.
+      if git pull --rebase --autostash --depth "$CLONE_DEPTH" origin main; then
+        # Drop the commits now outside the window from disk.
+        git reflog expire --expire-unreachable=now --all
+        git gc --prune=now --quiet
+      else
         echo "[init] pull failed — leaving volume as-is; sidecar will retry"
-      }
+      fi
     fi
 
     echo "[init] done"
@@ -165,6 +177,11 @@ data:
     # unnoticed for a month. Default 20 x 30 s = 10 min.
     MAX_PULL_FAILS="${MAX_PULL_FAILS:-20}"
     SYNC_MAX_LOOPS="${SYNC_MAX_LOOPS:-0}"   # tests only; 0 = forever
+    # Shallow clone window; see init.sh. Each pull keeps it at CLONE_DEPTH,
+    # and every GC_EVERY_LOOPS cycles (default 120 x 30 s = 1 h) gc deletes
+    # the commits that fell out of it.
+    CLONE_DEPTH="${CLONE_DEPTH:-50}"
+    GC_EVERY_LOOPS="${GC_EVERY_LOOPS:-120}"
     PULL_FAILS=0
     LOOPS=0
 
@@ -210,7 +227,7 @@ data:
 
       # 2. Reconcile with remote
       clear_stale_locks
-      if ! git pull --rebase --autostash origin main; then
+      if ! git pull --rebase --autostash --depth "$CLONE_DEPTH" origin main; then
         PULL_FAILS=$((PULL_FAILS + 1))
         echo "[sync] ${ts} pull failed (${PULL_FAILS}/${MAX_PULL_FAILS}) — will retry"
         if [ "$PULL_FAILS" -ge "$MAX_PULL_FAILS" ]; then
@@ -220,6 +237,10 @@ data:
         continue
       fi
       PULL_FAILS=0
+      if [ $((LOOPS % GC_EVERY_LOOPS)) -eq 0 ]; then
+        git reflog expire --expire-unreachable=now --all
+        git gc --prune=now --quiet || echo "[sync] ${ts} gc failed — will retry next window"
+      fi
 
       # 3. Push (no-op if nothing local). If push fails (e.g. branch
       # protection rejected the commit), log + carry on. The local
